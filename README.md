@@ -2,7 +2,7 @@
 
 ＝の横にbot tokenを書いてください
 
-youtube soundcloud bandcamp internetarcive(title取得不可能)
+youtube soundcloud bandcamp internetarcive(title取得不可能) favhentai
 
-現在この4つが使えます
+現在この5つが使えます。というかニコニコ以外のやつほとんど行けるかも＾＾
 
