@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-import asyncio
 import yt_dlp
 import logging
 import os
@@ -22,15 +21,45 @@ voice_clients = {}
 queues = {}
 current_track = {}
 
+class MusicControls(discord.ui.View):
+    def __init__(self, ctx):
+        super().__init__(timeout=None)
+        self.ctx = ctx
+
+    @discord.ui.button(label="⏸️ 一時停止/再開", style=discord.ButtonStyle.primary)
+    async def pause_resume(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = self.ctx.guild.id
+        if voice_clients[guild_id].is_playing():
+            voice_clients[guild_id].pause()
+            await interaction.response.send_message("⏸️ 再生を一時停止しました。", ephemeral=True)
+        else:
+            voice_clients[guild_id].resume()
+            await interaction.response.send_message("▶️ 再生を再開しました。", ephemeral=True)
+
+    @discord.ui.button(label="⏹️ 停止", style=discord.ButtonStyle.danger)
+    async def stop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = self.ctx.guild.id
+        voice_clients[guild_id].stop()
+        queues[guild_id] = []
+        await interaction.response.send_message("⏹️ 再生を停止し、キューをクリアしました。", ephemeral=True)
+
+    @discord.ui.button(label="⏭️ スキップ", style=discord.ButtonStyle.success)
+    async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = self.ctx.guild.id
+        voice_clients[guild_id].stop()
+        await interaction.response.send_message("⏭️ 次の曲にスキップしました。", ephemeral=True)
+        await play_next(interaction.guild, self.ctx)
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
 
 @bot.command()
 async def play(ctx, *, url):
+    """URLから音楽を再生します。"""
     try:
         if not ctx.message.author.voice:
-            await ctx.send("ボイスチャンネルに接続してください。")
+            await ctx.send("🔊 ボイスチャンネルに接続してください。")
             return
         channel = ctx.message.author.voice.channel
         
@@ -44,13 +73,13 @@ async def play(ctx, *, url):
 
         queues[ctx.guild.id].append(url)
         if not voice_clients[ctx.guild.id].is_playing():
-            await play_next(ctx.guild)
+            await play_next(ctx.guild, ctx)
 
     except Exception as e:
         logging.error(f"エラーが発生しました: {str(e)}")
-        await ctx.send(f"エラーが発生しました: {str(e)}")
+        await ctx.send(f"⚠️ エラーが発生しました: {str(e)}")
 
-async def stream_youtube(guild, url):
+async def stream_youtube(guild, url, ctx):
     ydl_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
@@ -62,45 +91,37 @@ async def stream_youtube(guild, url):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = await bot.loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
         url2 = info['url']
-    
+        title = info['title']
+        thumbnail = info.get('thumbnail', '')
+
     voice_client = voice_clients[guild.id]
-    voice_client.play(discord.FFmpegPCMAudio(url2), after=lambda e: bot.loop.create_task(play_next(guild)))
+    voice_client.play(discord.FFmpegPCMAudio(url2), after=lambda e: bot.loop.create_task(play_next(guild, ctx)))
 
-    current_track[guild.id] = (url, info["title"])
-    await guild.text_channels[0].send(f'再生中: {info["title"]}')
+    current_track[guild.id] = (url, title)
+    
+    # 埋め込みメッセージの作成
+    embed = discord.Embed(title="🎶 Now Playing", description=f"[{title}]({url})", color=discord.Color.blue())
+    embed.set_thumbnail(url=thumbnail)
+    
+    view = MusicControls(ctx)
+    await ctx.send(embed=embed, view=view)
 
-async def play_next(guild):
+async def play_next(guild, ctx):
     if queues[guild.id]:
         next_url = queues[guild.id].pop(0)
-        await stream_youtube(guild, next_url)
+        await stream_youtube(guild, next_url, ctx)
     else:
-        await guild.text_channels[0].send("再生キューが空です。")
-
-@bot.command()
-async def skip(ctx):
-    if ctx.guild.id in voice_clients and voice_clients[ctx.guild.id].is_playing():
-        voice_clients[ctx.guild.id].stop()
-        await ctx.send("次の曲にスキップしました。")
-    else:
-        await ctx.send("現在再生中の曲がありません。")
-
-@bot.command()
-async def stop(ctx):
-    if ctx.guild.id in voice_clients and voice_clients[ctx.guild.id].is_playing():
-        voice_clients[ctx.guild.id].stop()
-        queues[ctx.guild.id] = []
-        await ctx.send("再生を停止し、キューをクリアしました。")
-    else:
-        await ctx.send("現在再生中の曲がありません。")
+        await ctx.send("再生キューが空です。")
 
 @bot.command()
 async def leave(ctx):
+    """ボイスチャンネルから切断します。"""
     if ctx.guild.id in voice_clients:
         await voice_clients[ctx.guild.id].disconnect()
         del voice_clients[ctx.guild.id]
         if ctx.guild.id in queues:
             del queues[ctx.guild.id]
-        await ctx.send("ボイスチャンネルから切断しました。")
+        await ctx.send("🚪 ボイスチャンネルから切断しました。")
     else:
         await ctx.send("Botはボイスチャンネルに接続していません。")
 
